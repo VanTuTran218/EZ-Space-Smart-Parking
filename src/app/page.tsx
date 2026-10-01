@@ -1,0 +1,387 @@
+"use client";
+
+import { motion, AnimatePresence } from "framer-motion";
+import { Bell, Search, MapPin, Zap, Clock, ShieldCheck, ChevronRight, Car, User, Sparkles } from "lucide-react";
+import { useState, useEffect, useMemo, Suspense, useRef } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { clsx } from "clsx";
+import { vi } from "@/lib/i18n/vi";
+import { lots, Lot } from "@/lib/mock/lots";
+import { useStore } from "@/store";
+import BottomSheet from "@/components/ui/BottomSheet";
+import { ChevronDown } from "lucide-react";
+
+const normalize = (str: string) =>
+  str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+type FilterType = "all" | "sedan" | "suv" | "ev" | "availableNow";
+
+function ExploreContent() {
+  const router = useRouter();
+  
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filter, setFilter] = useState<FilterType>("all");
+  const [sheetContent, setSheetContent] = useState<"none" | "notif" | "area">("none");
+  const [area, setArea] = useState("Đà Nẵng");
+
+  const activeBooking = useStore((s) => s.activeBooking);
+  const addToast = useStore((s) => s.addToast);
+  const isDemo = useStore((s) => s.isDemo);
+  const setDemo = useStore((s) => s.setDemo);
+
+  const [timeLeft, setTimeLeft] = useState(0);
+
+  // Long press logic
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const handleTouchStart = () => {
+    timerRef.current = setTimeout(() => {
+      setDemo(!isDemo);
+      addToast(`Chế độ Demo: ${!isDemo ? "BẬT" : "TẮT"}`, "success");
+    }, 2000);
+  };
+  const handleTouchEnd = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  };
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 200);
+    return () => clearTimeout(handler);
+  }, [search]);
+
+  useEffect(() => {
+    if (!activeBooking) return;
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.floor((activeBooking.holdExpiresAt - Date.now()) / 1000));
+      setTimeLeft(remaining);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [activeBooking]);
+
+  const filteredLots = useMemo(() => {
+    let result = [...lots];
+
+    // Search
+    if (debouncedSearch) {
+      const q = normalize(debouncedSearch);
+      result = result.filter(
+        (l) => normalize(l.name).includes(q) || normalize(l.district).includes(q)
+      );
+    }
+
+    // Sort & Filter based on vehicle type
+    if (filter !== "all") {
+      result.sort((a, b) => {
+        let aAvail = 0;
+        let bAvail = 0;
+        if (filter === "sedan") { aAvail = a.available.sedan; bAvail = b.available.sedan; }
+        else if (filter === "suv") { aAvail = a.available.suv; bAvail = b.available.suv; }
+        else if (filter === "ev") { aAvail = a.available.ev; bAvail = b.available.ev; }
+        else if (filter === "availableNow") { aAvail = a.available.total; bAvail = b.available.total; }
+
+        if (aAvail === 0 && bAvail > 0) return 1;
+        if (bAvail === 0 && aAvail > 0) return -1;
+        return bAvail - aAvail;
+      });
+    }
+
+    return result;
+  }, [debouncedSearch, filter]);
+
+  const getAvailableCount = (lot: Lot) => {
+    if (filter === "sedan") return lot.available.sedan;
+    if (filter === "suv") return lot.available.suv;
+    if (filter === "ev") return lot.available.ev;
+    return lot.available.total;
+  };
+
+  const formatTimer = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F7F8FC] pb-32">
+      {/* Header */}
+      <div className="sticky top-0 bg-white/80 backdrop-blur-xl z-30 px-4 py-3 flex items-center justify-between border-b border-slate-100">
+        <div className="flex items-center gap-2 relative">
+          <button 
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onMouseDown={handleTouchStart}
+            onMouseUp={handleTouchEnd}
+            onMouseLeave={handleTouchEnd}
+            onClick={() => setSheetContent("area")}
+            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-full transition active:scale-95"
+          >
+            <MapPin size={16} className="text-[#2B4BD1]" />
+            <span className="font-bold text-slate-800 text-sm">{area}</span>
+            <ChevronDown size={14} className="text-slate-500" />
+          </button>
+        </div>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setSheetContent("notif")}
+            className="relative text-slate-600 hover:text-slate-900 min-w-[44px] min-h-[44px] flex items-center justify-center -mr-2 active:scale-95 transition-transform"
+          >
+            <Bell size={22} />
+            <span className="absolute top-2 right-2.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
+          </button>
+          <Link href="/ho-so" className="active:scale-95 transition-transform">
+            <div className="w-[40px] h-[40px] rounded-full bg-blue-100 flex items-center justify-center text-[#2B4BD1] overflow-hidden">
+              <User size={18} />
+            </div>
+          </Link>
+        </div>
+      </div>
+
+      <div className="px-4 pt-6">
+        {/* Greeting & Search */}
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+          <h2 className="text-2xl font-black text-slate-900 mb-1">{vi.home.greeting}</h2>
+          <p className="text-sm font-medium text-slate-500 mb-4">{vi.home.subtitle}</p>
+          
+          <div className="relative flex items-center">
+            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+              <Search size={20} className="text-slate-400" />
+            </div>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={vi.home.searchPlaceholder}
+              className="w-full bg-white border border-slate-200 rounded-2xl py-4 pl-12 pr-14 text-[16px] font-medium text-slate-900 placeholder-slate-400 shadow-[0_2px_12px_rgba(0,0,0,0.03)] focus:outline-none focus:ring-2 focus:ring-[#2B4BD1]/20 focus:border-[#2B4BD1] transition-all"
+            />
+            {search.length > 0 && (
+              <button 
+                onClick={() => router.push(`/ai?q=${encodeURIComponent(search)}`)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 bg-blue-50 text-[#2B4BD1] rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+              >
+                <Sparkles size={18} />
+              </button>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Chips */}
+        <div className="flex gap-2 overflow-x-auto pb-4 -mx-4 px-4 scrollbar-hide mb-2">
+          <Chip active={filter === "all"} onClick={() => setFilter("all")} label={vi.home.filters.all} />
+          <Chip active={filter === "sedan"} onClick={() => setFilter("sedan")} label={vi.home.filters.sedan} />
+          <Chip active={filter === "suv"} onClick={() => setFilter("suv")} label={vi.home.filters.suv} />
+          <Chip active={filter === "ev"} onClick={() => setFilter("ev")} label={vi.home.filters.ev} />
+          <Chip active={filter === "availableNow"} onClick={() => setFilter("availableNow")} label={vi.home.filters.availableNow} />
+        </div>
+
+        {/* Active Booking Banner */}
+        <AnimatePresence>
+          {activeBooking && (
+            <motion.div
+              initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+              animate={{ opacity: 1, height: "auto", marginBottom: 24 }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              className="overflow-hidden"
+            >
+              <Link href={`/ve/${activeBooking.id}`}>
+                <div className="bg-orange-50 border border-orange-100 rounded-[20px] p-4 flex items-center gap-3 active:scale-[0.98] transition-transform">
+                  <div className="w-12 h-12 rounded-full border-4 border-orange-200 flex items-center justify-center shrink-0 relative">
+                    <svg className="absolute inset-0 w-full h-full -rotate-90">
+                      <circle cx="20" cy="20" r="18" fill="none" stroke="#f97316" strokeWidth="4" strokeDasharray="113" strokeDashoffset={113 - (113 * timeLeft) / 600} className="transition-all duration-1000 linear" />
+                    </svg>
+                    <span className="text-orange-600 font-bold text-[10px] tabular-nums">{formatTimer(timeLeft)}</span>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-bold text-orange-900 text-sm mb-0.5">{vi.home.activeBooking.title}</h3>
+                    <p className="text-xs font-medium text-orange-700/80">Ô {activeBooking.spotId} • Bãi Hải Châu A</p>
+                  </div>
+                  <ChevronRight size={20} className="text-orange-400" />
+                </div>
+              </Link>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* List */}
+        <div className="flex justify-between items-end mb-4">
+          <h2 className="text-lg font-bold text-slate-900">{vi.home.nearby}</h2>
+          <span className="text-sm font-bold text-slate-400">{vi.home.lotsCount(filteredLots.length)}</span>
+        </div>
+
+        <div className="space-y-4">
+          <AnimatePresence mode="popLayout">
+            {filteredLots.map((lot, idx) => {
+              const count = getAvailableCount(lot);
+              const isEmpty = count === 0;
+              return (
+                <motion.div
+                  key={lot.id}
+                  layout
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: isEmpty ? 0.5 : 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.4, staggerChildren: 0.1 }}
+                >
+                  <Link href={`/bai/${lot.id}`}>
+                    <div className="bg-white rounded-[20px] shadow-[0_8px_24px_rgba(0,0,0,0.04)] overflow-hidden active:scale-[0.98] transition-transform border border-slate-100/50">
+                      {/* Image Header */}
+                      <div className={clsx("h-[120px] bg-gradient-to-br relative p-3 flex flex-col justify-between", lot.gradient)}>
+                        <div className="flex justify-end">
+                          <div className="bg-white/95 backdrop-blur-sm px-2.5 py-1.5 rounded-full flex items-center gap-1.5 shadow-sm">
+                            <div className={clsx("w-2 h-2 rounded-full", isEmpty ? "bg-red-500" : "bg-emerald-500")} />
+                            <span className={clsx("text-xs font-bold font-mono tabular-nums", isEmpty ? "text-red-600" : "text-emerald-700")}>
+                              {count}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">{vi.lotCard.available}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-4">
+                        <h3 className="text-[17px] font-bold text-slate-900 mb-1 leading-tight">{lot.name}</h3>
+                        <p className="text-xs font-medium text-slate-500 flex items-center gap-1 mb-4">
+                          <MapPin size={12} /> {lot.district} • {vi.formatDistance(lot.distance)}
+                        </p>
+
+                        {/* Capacity Bar */}
+                        <div className="mb-3">
+                          <div className="h-2.5 bg-slate-100 rounded-full flex overflow-hidden">
+                            <motion.div initial={{ width: 0 }} whileInView={{ width: `${(lot.available.total / lot.total) * 100}%` }} viewport={{ once: true }} className="bg-emerald-500" />
+                            <motion.div initial={{ width: 0 }} whileInView={{ width: `${(lot.holding / lot.total) * 100}%` }} viewport={{ once: true }} className="bg-amber-400" />
+                            <motion.div initial={{ width: 0 }} whileInView={{ width: `${(lot.occupied / lot.total) * 100}%` }} viewport={{ once: true }} className="bg-red-500" />
+                          </div>
+                        </div>
+
+                        {/* Types breakdown */}
+                        <div className="flex gap-4 mb-4">
+                          <TypeCount type="Sedan" count={lot.available.sedan} />
+                          <TypeCount type="SUV" count={lot.available.suv} />
+                          <TypeCount type="EV" count={lot.available.ev} />
+                        </div>
+
+                        <div className="flex items-end justify-between border-t border-slate-50 pt-4">
+                          <div className="flex gap-1.5 flex-wrap max-w-[60%]">
+                            {lot.labels.slice(0, 3).map((lbl) => (
+                              <span key={lbl} className="bg-slate-50 text-slate-500 text-[10px] font-bold px-2 py-1 rounded-md border border-slate-100">
+                                {lbl}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="text-right flex items-center gap-3">
+                            <div>
+                              <div className="text-[15px] font-black text-[#2B4BD1] tabular-nums leading-none">
+                                {vi.formatMoney(lot.price).replace(" ₫", "")}
+                                <span className="text-xs font-medium text-slate-500 ml-0.5">{vi.lotCard.pricePerHour}</span>
+                              </div>
+                            </div>
+                            <div className="w-8 h-8 rounded-full bg-[#2B4BD1] text-white flex items-center justify-center shrink-0">
+                              <ChevronRight size={16} strokeWidth={3} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+
+          {filteredLots.length === 0 && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Search size={24} className="text-slate-400" />
+              </div>
+              <h3 className="font-bold text-slate-900 mb-2">{vi.home.emptyState.title}</h3>
+              <button onClick={() => setSearch("")} className="text-[#2B4BD1] font-bold text-sm bg-blue-50 px-4 py-2 rounded-xl">
+                {vi.home.emptyState.clearBtn}
+              </button>
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      {/* Sheets */}
+      <BottomSheet isOpen={sheetContent === "notif"} onClose={() => setSheetContent("none")} title="Thông báo">
+        <div className="space-y-4">
+          {[1, 2, 3].map((_, i) => (
+            <div key={i} className="flex gap-4 items-start p-4 bg-slate-50 rounded-[16px] border border-slate-100">
+              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                <Bell size={18} />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm mb-1">Cập nhật hệ thống</h4>
+                <p className="text-xs font-medium text-slate-500 mb-2">EZ-Space vừa cập nhật thêm tính năng mới giúp bạn đỗ xe dễ dàng hơn.</p>
+                <span className="text-[10px] font-bold text-slate-400">2 giờ trước</span>
+              </div>
+            </div>
+          ))}
+          <button onClick={() => { setSheetContent("none"); addToast("Đã đánh dấu đọc tất cả"); }} className="w-full bg-slate-100 text-slate-900 font-bold py-4 rounded-[16px] mt-4 active:scale-95 transition-transform">
+            Đánh dấu đã đọc
+          </button>
+        </div>
+      </BottomSheet>
+
+      <BottomSheet isOpen={sheetContent === "area"} onClose={() => setSheetContent("none")} title="Chọn khu vực">
+        <div className="space-y-2">
+          {["Hải Châu", "Sơn Trà", "Thanh Khê", "Ngũ Hành Sơn"].map((a) => (
+            <button 
+              key={a}
+              onClick={() => {
+                setArea(a);
+                setSearch(a);
+                setSheetContent("none");
+              }}
+              className={clsx(
+                "w-full text-left px-4 py-4 rounded-[16px] font-bold transition-colors active:scale-95",
+                area === a ? "bg-[#2B4BD1] text-white shadow-md shadow-[#2B4BD1]/30" : "bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-100"
+              )}
+            >
+              Quận {a}
+            </button>
+          ))}
+        </div>
+      </BottomSheet>
+
+    </div>
+  );
+}
+
+function Chip({ active, onClick, label }: any) {
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        "px-4 py-2 rounded-[14px] text-[13px] font-bold whitespace-nowrap transition-all flex items-center min-h-[44px]",
+        active
+          ? "bg-[#2B4BD1] text-white shadow-md shadow-[#2B4BD1]/20"
+          : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 active:scale-95"
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function TypeCount({ type, count }: { type: string; count: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {type === "EV" ? <Zap size={12} className="text-slate-400" /> : <Car size={12} className="text-slate-400" />}
+      <span className="text-xs font-medium text-slate-500">{type} <span className="font-bold text-slate-900 tabular-nums">{count}</span></span>
+    </div>
+  );
+}
+
+export default function ExplorePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#F7F8FC]" />}>
+      <ExploreContent />
+    </Suspense>
+  );
+}
